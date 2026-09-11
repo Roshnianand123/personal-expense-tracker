@@ -40,3 +40,6 @@ htmlcov/
 Thumbs.db
 .vscode/
 .idea/
+
+# Vercel
+.vercel/
