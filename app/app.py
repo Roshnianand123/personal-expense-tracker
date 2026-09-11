@@ -1,11 +1,38 @@
+import logging
 import os
 from datetime import datetime
 from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import (
     LoginManager, current_user, login_required, login_user, logout_user
 )
-from sqlalchemy import func
+from sqlalchemy import func, inspect, text
 from app.models import Transaction, User, db
+
+logger = logging.getLogger(__name__)
+
+
+def _migrate_database(app):
+    """Ensure the database schema is up-to-date.
+
+    Handles the case where the 'transactions' table was created before
+    the auth feature and is missing the 'user_id' column.
+    """
+    try:
+        inspector = inspect(db.engine)
+
+        if 'transactions' in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns('transactions')]
+            if 'user_id' not in columns:
+                logger.info("Migrating: adding 'user_id' column to 'transactions'")
+                with db.engine.connect() as conn:
+                    conn.execute(text(
+                        'ALTER TABLE transactions '
+                        'ADD COLUMN user_id INTEGER REFERENCES users(id)'
+                    ))
+                    conn.commit()
+                logger.info("Migration complete: 'user_id' column added.")
+    except Exception as exc:
+        logger.warning("Auto-migration check failed: %s", exc)
 
 
 def create_app(test_config=None):
@@ -46,10 +73,42 @@ def create_app(test_config=None):
     with app.app_context():
         try:
             db.create_all()
-        except Exception:
-            # On serverless (Vercel), database may not be available at
-            # cold start. Tables should be pre-created in production.
-            pass
+            _migrate_database(app)
+        except Exception as exc:
+            # Log the error so it surfaces in Vercel / container logs
+            logger.error("Database initialisation failed: %s", exc)
+
+    # ── Error Handler ────────────────────────────────────────────
+
+    @app.errorhandler(500)
+    def internal_error(error):
+        logger.error("500 Internal Server Error: %s", error)
+        db.session.rollback()
+        return (
+            "<h1>Internal Server Error</h1>"
+            "<p>Something went wrong. Check the application logs.</p>"
+        ), 500
+
+    # ── Diagnostic Route ─────────────────────────────────────────
+
+    @app.route('/health')
+    def health():
+        """Quick health check — verifies DB connectivity and schema."""
+        info = {'status': 'ok', 'database': 'unknown', 'tables': []}
+        try:
+            inspector = inspect(db.engine)
+            info['tables'] = inspector.get_table_names()
+            if 'transactions' in info['tables']:
+                cols = [c['name'] for c in inspector.get_columns('transactions')]
+                info['transactions_columns'] = cols
+            if 'users' in info['tables']:
+                cols = [c['name'] for c in inspector.get_columns('users')]
+                info['users_columns'] = cols
+            info['database'] = 'connected'
+        except Exception as exc:
+            info['status'] = 'error'
+            info['database'] = str(exc)
+        return jsonify(info)
 
     # ── Auth Routes ──────────────────────────────────────────────
 
