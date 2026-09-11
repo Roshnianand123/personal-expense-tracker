@@ -1,12 +1,20 @@
 import os
 from datetime import datetime
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
+from flask_login import (
+    LoginManager, current_user, login_required, login_user, logout_user
+)
 from sqlalchemy import func
-from app.models import Transaction, db
+from app.models import Transaction, User, db
 
 
 def create_app(test_config=None):
     app = Flask(__name__)
+
+    # Secret key for session encryption
+    app.config['SECRET_KEY'] = os.environ.get(
+        'SECRET_KEY', 'dev-secret-key-change-in-production'
+    )
 
     # Default configuration with PostgreSQL in mind, falling back to SQLite
     database_url = os.environ.get(
@@ -25,6 +33,16 @@ def create_app(test_config=None):
 
     db.init_app(app)
 
+    # Flask-Login setup
+    login_manager = LoginManager()
+    login_manager.login_view = 'login'
+    login_manager.login_message_category = 'info'
+    login_manager.init_app(app)
+
+    @login_manager.user_loader
+    def load_user(user_id):
+        return User.query.get(int(user_id))
+
     with app.app_context():
         try:
             db.create_all()
@@ -33,17 +51,96 @@ def create_app(test_config=None):
             # cold start. Tables should be pre-created in production.
             pass
 
+    # ── Auth Routes ──────────────────────────────────────────────
+
+    @app.route('/register', methods=['GET', 'POST'])
+    def register():
+        if current_user.is_authenticated:
+            return redirect(url_for('index'))
+
+        if request.method == 'POST':
+            username = request.form.get('username', '').strip()
+            email = request.form.get('email', '').strip().lower()
+            password = request.form.get('password', '')
+            confirm = request.form.get('confirm_password', '')
+
+            if not username or not email or not password:
+                flash('All fields are required.', 'error')
+                return redirect(url_for('register'))
+
+            if password != confirm:
+                flash('Passwords do not match.', 'error')
+                return redirect(url_for('register'))
+
+            if len(password) < 6:
+                flash('Password must be at least 6 characters.', 'error')
+                return redirect(url_for('register'))
+
+            if User.query.filter_by(email=email).first():
+                flash('Email already registered. Please login.', 'error')
+                return redirect(url_for('register'))
+
+            user = User(username=username, email=email)
+            user.set_password(password)
+            db.session.add(user)
+            db.session.commit()
+
+            login_user(user)
+            flash('Account created successfully!', 'success')
+            return redirect(url_for('index'))
+
+        return render_template('register.html')
+
+    @app.route('/login', methods=['GET', 'POST'])
+    def login():
+        if current_user.is_authenticated:
+            return redirect(url_for('index'))
+
+        if request.method == 'POST':
+            email = request.form.get('email', '').strip().lower()
+            password = request.form.get('password', '')
+
+            user = User.query.filter_by(email=email).first()
+
+            if user and user.check_password(password):
+                login_user(user)
+                next_page = request.args.get('next')
+                flash(f'Welcome back, {user.username}!', 'success')
+                return redirect(next_page or url_for('index'))
+
+            flash('Invalid email or password.', 'error')
+            return redirect(url_for('login'))
+
+        return render_template('login.html')
+
+    @app.route('/logout')
+    @login_required
+    def logout():
+        logout_user()
+        flash('You have been logged out.', 'info')
+        return redirect(url_for('login'))
+
+    # ── Dashboard Routes ─────────────────────────────────────────
+
     @app.route('/')
+    @login_required
     def index():
         category_filter = request.args.get('category', '').strip()
-        query = Transaction.query
+        query = Transaction.query.filter_by(user_id=current_user.id)
         if category_filter:
             query = query.filter_by(category=category_filter)
 
-        transactions = query.order_by(Transaction.date.desc(), Transaction.id.desc()).all()
+        transactions = query.order_by(
+            Transaction.date.desc(), Transaction.id.desc()
+        ).all()
 
-        # Unique categories for filter dropdown
-        categories_query = db.session.query(Transaction.category).distinct().all()
+        # Unique categories for filter dropdown (user's own)
+        categories_query = (
+            db.session.query(Transaction.category)
+            .filter_by(user_id=current_user.id)
+            .distinct()
+            .all()
+        )
         categories = sorted([c[0] for c in categories_query if c[0]])
 
         return render_template(
@@ -54,6 +151,7 @@ def create_app(test_config=None):
         )
 
     @app.route('/add', methods=['POST'])
+    @login_required
     def add_transaction():
         # Handle both JSON payloads and Form submissions
         if request.is_json:
@@ -87,7 +185,8 @@ def create_app(test_config=None):
             amount=amount_val,
             category=category.strip(),
             date=tx_date,
-            note=note.strip() if note else None
+            note=note.strip() if note else None,
+            user_id=current_user.id
         )
         db.session.add(new_tx)
         db.session.commit()
@@ -100,14 +199,23 @@ def create_app(test_config=None):
         return redirect(url_for('index'))
 
     @app.route('/summary', methods=['GET'])
+    @login_required
     def summary():
-        # Calculate summary statistics
-        total_spent = db.session.query(func.sum(Transaction.amount)).scalar() or 0.0
-        tx_count = db.session.query(func.count(Transaction.id)).scalar() or 0
+        # Calculate summary statistics (user's own data only)
+        user_txns = Transaction.query.filter_by(user_id=current_user.id)
+        total_spent = (
+            db.session.query(func.sum(Transaction.amount))
+            .filter_by(user_id=current_user.id)
+            .scalar() or 0.0
+        )
+        tx_count = user_txns.count()
 
         # Category breakdown
         category_breakdown = (
-            db.session.query(Transaction.category, func.sum(Transaction.amount))
+            db.session.query(
+                Transaction.category, func.sum(Transaction.amount)
+            )
+            .filter_by(user_id=current_user.id)
             .group_by(Transaction.category)
             .all()
         )
@@ -121,10 +229,14 @@ def create_app(test_config=None):
         }), 200
 
     @app.route('/chart-data', methods=['GET'])
+    @login_required
     def chart_data():
-        # Returns aggregated spending by category formatted specifically for Chart.js
+        # Returns aggregated spending by category for Chart.js (user's own)
         results = (
-            db.session.query(Transaction.category, func.sum(Transaction.amount))
+            db.session.query(
+                Transaction.category, func.sum(Transaction.amount)
+            )
+            .filter_by(user_id=current_user.id)
             .group_by(Transaction.category)
             .order_by(func.sum(Transaction.amount).desc())
             .all()
@@ -142,8 +254,12 @@ def create_app(test_config=None):
         }), 200
 
     @app.route('/delete/<int:tx_id>', methods=['POST', 'DELETE'])
+    @login_required
     def delete_transaction(tx_id):
         tx = Transaction.query.get_or_404(tx_id)
+        # Ensure users can only delete their own transactions
+        if tx.user_id != current_user.id:
+            return jsonify({'error': 'Unauthorized'}), 403
         db.session.delete(tx)
         db.session.commit()
         if request.is_json or request.method == 'DELETE':

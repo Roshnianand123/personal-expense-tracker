@@ -163,7 +163,7 @@ async function loadChartData() {
                             boxPadding: 6,
                             usePointStyle: true,
                             callbacks: {
-                                label: function(context) {
+                                label: function (context) {
                                     return ` $${context.parsed.y.toFixed(2)}`;
                                 }
                             }
@@ -193,7 +193,7 @@ async function loadChartData() {
                                     family: "'Plus Jakarta Sans', sans-serif",
                                     size: 11
                                 },
-                                callback: function(value) {
+                                callback: function (value) {
                                     return '$' + value;
                                 }
                             }

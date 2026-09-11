@@ -1,6 +1,6 @@
 import pytest
 from app.app import create_app
-from app.models import Transaction, db
+from app.models import Transaction, User, db
 
 
 @pytest.fixture
@@ -9,12 +9,28 @@ def client():
     test_app = create_app({
         'TESTING': True,
         'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
-        'SQLALCHEMY_TRACK_MODIFICATIONS': False
+        'SQLALCHEMY_TRACK_MODIFICATIONS': False,
+        'SECRET_KEY': 'test-secret-key',
+        'WTF_CSRF_ENABLED': False,
+        'LOGIN_DISABLED': False,
     })
 
     with test_app.test_client() as test_client:
         with test_app.app_context():
             db.create_all()
+
+            # Create a test user and log in
+            user = User(username='TestUser', email='test@example.com')
+            user.set_password('password123')
+            db.session.add(user)
+            db.session.commit()
+
+            # Log in the test user
+            test_client.post('/login', data={
+                'email': 'test@example.com',
+                'password': 'password123'
+            }, follow_redirects=True)
+
             yield test_client
             db.session.remove()
             db.drop_all()
@@ -75,3 +91,33 @@ def test_chart_data_endpoint(client):
     assert data['labels'] == ['Electronics', 'Utilities']
     assert data['datasets'][0]['data'] == [200.0, 80.0]
     assert data['datasets'][0]['label'] == 'Spending by Category ($)'
+
+
+def test_register_and_login(client):
+    """Test 4: Verify user registration and login flow."""
+    # Logout first (client fixture logs in automatically)
+    client.get('/logout', follow_redirects=True)
+
+    # Register a new user
+    response = client.post('/register', data={
+        'username': 'NewUser',
+        'email': 'new@example.com',
+        'password': 'securepass',
+        'confirm_password': 'securepass'
+    }, follow_redirects=True)
+    assert response.status_code == 200
+
+    # Verify user was created
+    user = User.query.filter_by(email='new@example.com').first()
+    assert user is not None
+    assert user.username == 'NewUser'
+
+
+def test_unauthenticated_redirect(client):
+    """Test 5: Verify unauthenticated users are redirected to login."""
+    # Logout
+    client.get('/logout', follow_redirects=True)
+
+    # Try accessing dashboard without auth
+    response = client.get('/')
+    assert response.status_code == 302  # Redirect to login

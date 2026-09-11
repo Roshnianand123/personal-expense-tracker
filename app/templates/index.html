@@ -13,6 +13,14 @@
 </head>
 <body>
     <div class="app-container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash-message flash-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
         <!-- Header -->
         <header class="app-header">
             <div class="header-content">
@@ -20,9 +28,9 @@
                 <h1>Personal Expense Tracker</h1>
                 <p class="subtitle">Real-time expense monitoring, category breakdown, and budget analytics</p>
             </div>
-            <div class="header-status">
-                <span class="status-indicator"></span>
-                <span class="status-text">PostgreSQL & Flask Active</span>
+            <div class="header-user">
+                <span class="user-greeting">👋 {{ current_user.username }}</span>
+                <a href="/logout" class="btn btn-logout">Logout</a>
             </div>
         </header>
 
