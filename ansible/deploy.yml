@@ -1,0 +1,61 @@
+---
+- name: Deploy Personal Expense Tracker Multi-Container Stack
+  hosts: all
+  gather_facts: true
+  vars:
+    project_dir: "{{ playbook_dir }}/.."
+    env_file_src: "{{ project_dir }}/.env"
+    env_file_dest: "{{ project_dir }}/.env"
+
+  tasks:
+    - name: Verify Docker is installed and running
+      ansible.builtin.command:
+        cmd: docker --version
+      register: docker_check
+      changed_when: false
+
+    - name: Display Docker version
+      ansible.builtin.debug:
+        msg: "Found {{ docker_check.stdout }}"
+
+    - name: Verify Docker Compose is available
+      ansible.builtin.command:
+        cmd: docker compose version
+      register: compose_check
+      changed_when: false
+
+    - name: Display Docker Compose version
+      ansible.builtin.debug:
+        msg: "Found {{ compose_check.stdout }}"
+
+    - name: Copy .env configuration file to target project directory
+      ansible.builtin.copy:
+        src: "{{ project_dir }}/.env.example"
+        dest: "{{ env_file_dest }}"
+        mode: '0600'
+        force: false
+
+    - name: Deploy stack using Docker Compose (docker compose up -d --build)
+      ansible.builtin.command:
+        cmd: docker compose up -d --build
+        chdir: "{{ project_dir }}"
+      register: compose_deploy
+      changed_when: "'Started' in compose_deploy.stdout or 'Built' in compose_deploy.stdout"
+
+    - name: Wait for Expense Tracker service to become healthy
+      ansible.builtin.uri:
+        url: "http://localhost:5000/summary"
+        status_code: 200
+        return_content: false
+      register: service_health
+      until: service_health.status == 200
+      retries: 12
+      delay: 5
+
+    - name: Confirm successful deployment
+      ansible.builtin.debug:
+        msg:
+          - "=========================================================="
+          - " Personal Expense Tracker successfully deployed and online! "
+          - " URL: http://localhost:5000                              "
+          - "=========================================================="

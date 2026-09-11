@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Personal Expense Tracker - Track expenses, monitor category spending, and visualize budget insights with real-time Chart.js analytics.">
+    <title>Personal Expense Tracker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-content">
+                <div class="badge">DevOps Project 02</div>
+                <h1>Personal Expense Tracker</h1>
+                <p class="subtitle">Real-time expense monitoring, category breakdown, and budget analytics</p>
+            </div>
+            <div class="header-status">
+                <span class="status-indicator"></span>
+                <span class="status-text">PostgreSQL & Flask Active</span>
+            </div>
+        </header>
+
+        <!-- KPI Summary Cards -->
+        <section class="kpi-grid">
+            <div class="kpi-card" id="card-total-spent">
+                <div class="kpi-icon">💰</div>
+                <div class="kpi-details">
+                    <span class="kpi-label">Total Spending</span>
+                    <h2 class="kpi-value" id="kpi-total">$0.00</h2>
+                </div>
+            </div>
+            <div class="kpi-card" id="card-total-count">
+                <div class="kpi-icon">🧾</div>
+                <div class="kpi-details">
+                    <span class="kpi-label">Transactions</span>
+                    <h2 class="kpi-value" id="kpi-count">0</h2>
+                </div>
+            </div>
+            <div class="kpi-card" id="card-top-category">
+                <div class="kpi-icon">📊</div>
+                <div class="kpi-details">
+                    <span class="kpi-label">Top Category</span>
+                    <h2 class="kpi-value" id="kpi-top-category">None</h2>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Dashboard Content -->
+        <main class="dashboard-grid">
+            <!-- Left Column: Add Transaction Form & Filter -->
+            <div class="dashboard-column">
+                <!-- Add Transaction Card -->
+                <div class="glass-panel form-panel">
+                    <div class="panel-header">
+                        <h2>Add Transaction</h2>
+                        <span class="panel-tag">POST /add</span>
+                    </div>
+
+                    <form id="add-transaction-form" action="/add" method="POST" class="form-layout">
+                        <div class="form-group">
+                            <label for="amount">Amount ($)</label>
+                            <div class="input-prefix-wrapper">
+                                <span class="input-prefix">$</span>
+                                <input type="number" id="amount" name="amount" step="0.01" min="0.01" placeholder="45.50" required>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="category">Category</label>
+                            <input list="category-suggestions" id="category" name="category" placeholder="e.g. Groceries, Rent, Utilities" required>
+                            <datalist id="category-suggestions">
+                                <option value="Groceries">
+                                <option value="Rent">
+                                <option value="Utilities">
+                                <option value="Dining Out">
+                                <option value="Entertainment">
+                                <option value="Transport">
+                                <option value="Healthcare">
+                                <option value="Shopping">
+                            </datalist>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="date">Date</label>
+                            <input type="date" id="date" name="date" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="note">Note (Optional)</label>
+                            <input type="text" id="note" name="note" placeholder="Weekly supermarket run" maxlength="255">
+                        </div>
+
+                        <button type="submit" id="btn-submit-tx" class="btn btn-primary">
+                            <span>Add Expense</span>
+                            <span class="btn-arrow">→</span>
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Category Filter -->
+                <div class="glass-panel filter-panel">
+                    <div class="filter-header">
+                        <h3>Filter by Category</h3>
+                        {% if selected_category %}
+                            <a href="/" class="clear-filter-link">Clear Filter ✕</a>
+                        {% endif %}
+                    </div>
+                    <div class="filter-chips">
+                        <a href="/" class="chip {% if not selected_category %}active{% endif %}">All</a>
+                        {% for cat in categories %}
+                            <a href="/?category={{ cat }}" class="chip {% if selected_category == cat %}active{% endif %}">{{ cat }}</a>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Visual Chart & Transactions List -->
+            <div class="dashboard-column">
+                <!-- Bar Chart Panel -->
+                <div class="glass-panel chart-panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Spending by Category</h2>
+                            <p class="panel-subtitle">Real-time Chart.js aggregation via <code>/chart-data</code></p>
+                        </div>
+                        <button id="btn-refresh-chart" class="btn-icon" title="Refresh Chart">↻</button>
+                    </div>
+                    <div class="chart-canvas-container">
+                        <canvas id="categoryChart"></canvas>
+                        <div id="chart-empty-state" class="chart-empty-state" style="display: none;">
+                            <p>No expense data recorded yet. Add your first transaction to see the breakdown.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Transaction History Table Panel -->
+                <div class="glass-panel table-panel">
+                    <div class="panel-header">
+                        <h2>Recent Transactions</h2>
+                        <span class="badge-count">{{ transactions|length }} items</span>
+                    </div>
+
+                    <div class="table-container">
+                        {% if transactions %}
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Category</th>
+                                    <th>Note</th>
+                                    <th>Amount</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for tx in transactions %}
+                                <tr>
+                                    <td class="tx-date">{{ tx.date.strftime('%b %d, %Y') }}</td>
+                                    <td><span class="category-badge">{{ tx.category }}</span></td>
+                                    <td class="tx-note">{{ tx.note or '—' }}</td>
+                                    <td class="tx-amount">${{ "%.2f"|format(tx.amount) }}</td>
+                                    <td>
+                                        <form action="/delete/{{ tx.id }}" method="POST" style="margin: 0;">
+                                            <button type="submit" class="btn-delete" title="Delete" onclick="return confirm('Delete this transaction?')">✕</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        {% else %}
+                        <div class="empty-state">
+                            <div class="empty-icon">📭</div>
+                            <p>No transactions found{% if selected_category %} for category "{{ selected_category }}"{% endif %}.</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="app-footer">
+            <p>Personal Expense Tracker &bull; DevOps Training Multi-Container Project &bull; PostgreSQL &bull; Flask &bull; Chart.js</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='chart.js') }}"></script>
+</body>
+</html>
