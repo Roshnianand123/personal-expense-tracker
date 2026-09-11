@@ -26,7 +26,12 @@ def create_app(test_config=None):
     db.init_app(app)
 
     with app.app_context():
-        db.create_all()
+        try:
+            db.create_all()
+        except Exception:
+            # On serverless (Vercel), database may not be available at
+            # cold start. Tables should be pre-created in production.
+            pass
 
     @app.route('/')
     def index():
